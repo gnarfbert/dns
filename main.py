@@ -8,6 +8,7 @@ def main():
 
     query = sys.argv[1]
     dns = Resolver(6767)
+    dns.resolve_query(query)
 
 
 if __name__ == "__main__":
