@@ -1,8 +1,12 @@
 import json
 from pathlib import Path
+from dns.rrset import RRset
+from dns.rdata import Rdata
 import dns.message
 import dns.query
 import dns.exception
+import dns.rcode
+import dns.rdatatype
 import random
 import time
 
@@ -20,35 +24,50 @@ class Resolver:
         
         pass
 
+    def fetch_glue_record_ip(self, additional_servers: list[RRset], record_type: str) -> str:
+        res: list[RRset] = []
+
+        for rrset in additional_servers:
+            record = dns.rdatatype.to_text(rrset.rdtype) 
+            if record == record_type:
+                res.append(rrset)
+        
+        random_idx = random.randint(0, len(res) - 1)
+        random_server: Rdata = res[random_idx].pop()
+        glue_ip = random_server.to_text()
+        return glue_ip
+
+
     def resolve_query(self, query: str): 
-    
-        for ns, root in self._root_hints.items():
-            #Hard coded the record type "A"
-            user_query = dns.message.make_query(query, "A")
-            #Could make use to writing over tcp socket instead but I would need to unserialize data.
-            response = dns.query.tcp(user_query, root, timeout=1.0)
-            curr_idx = 0
-            authority_servers = response.additional
-            while authority_servers:
-                # if curr_idx >= len(authority_servers):
-                #     print("Invalid domain name")
-                #     return
-                if response.answer:
-                    print(response)
-                    return
-                #Converts the response RRSet object to text and split on " "
-                authority_ip = authority_servers.pop().to_text().split(" ")[4]
-                print(authority_ip)
-                try:
-                    response = dns.query.tcp(user_query, authority_ip, timeout= 1.0)
-                except dns.exception.Timeout:
-                    authority_servers += response.additional
-                    time.sleep(0.1)
-            
-            print(response)
-            return response            
+        
+        root_server = self._root_hints["a.root-servers.net"]
+        user_query = dns.message.make_query(query, "A")
+        res = dns.query.udp(user_query, root_server)
+        while True:
+            if res.rcode() != dns.rcode.NOERROR:
+                print(f'Could not resolve domain: {query}, encountered error: {res.rcode().to_text}' )
+                return
+            if res.answer:
+                answer = None
+                for rrset in res.answer:
+                    record_type = dns.rdatatype.to_text(rrset.rdtype)
+                    if record_type == "A":
+                        answer = rrset
+                return answer
+
+            if res.authority:
+                if res.additional:
+                    glue_ip = self.fetch_glue_record_ip(res.additional, "A")
+                    res = dns.query.udp(user_query, glue_ip)
+                else:
+                    random_idx = random.randint(0, len(res.authority) - 1)
+                    random_rrset = res.authority[random_idx]
+                    record: Rdata = random_rrset.pop()
+                    ns_record = record.to_text()[0:len(record.to_text()) - 1]
+                    glue_ip: Rdata = self.resolve_query(ns_record).pop()
+                    glue_ip = glue_ip.to_text()
+                    res = dns.query.udp(user_query, glue_ip)           
 
 
-        return "Could not correctly parse the input domain"
 
 
