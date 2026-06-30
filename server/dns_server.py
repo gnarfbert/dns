@@ -4,11 +4,12 @@ from dns.rrset import RRset
 from dns.rdata import Rdata
 import dns.message
 import dns.query
-import dns.exception
 import dns.rcode
 import dns.rdatatype
 import random
-import time
+import socket
+import dns.rrset
+import dns.rdataclass
 
 BASE_DIR = Path(__file__).resolve().parent
 ROOTNAME_SERVERS = BASE_DIR/'root_hints'/'rootname_servers.json'
@@ -22,7 +23,36 @@ class Resolver:
         except FileExistsError or FileNotFoundError:
             print("Please restore the rootname_servers.json file in /root_hints directory")
         
-        pass
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("localhost", port))
+        print(f"Server listening on localhost with port: {port}...")    
+
+        while True:
+            try:
+                data, addr = sock.recvfrom(512)
+                query = dns.message.from_wire(data)
+                question_rreset = query.question[0]
+                domain_name = question_rreset.name.to_text().rstrip(".")
+                answer = self.resolve_query(domain_name).to_text().split(" ")[4]
+                response = dns.message.make_response(query)
+                answer_rrset = dns.rrset.from_text(
+                    domain_name,
+                    300,
+                    dns.rdataclass.IN,
+                    dns.rdatatype.A,
+                    answer
+                )
+                response.answer.append(answer_rrset)
+                bytes = response.to_wire()
+                sock.sendto(bytes, addr)
+                print(answer)
+                pass
+            except KeyboardInterrupt:
+                print("\nClosing server...")
+                break
+
+
+
 
     def fetch_glue_record_ip(self, additional_servers: list[RRset], record_type: str) -> str:
         res: list[RRset] = []
